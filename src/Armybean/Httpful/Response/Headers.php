@@ -66,6 +66,8 @@ final class Headers implements \ArrayAccess, \Countable {
         {
             return $this->headers[$offset];
         }
+
+        return null;
     }
 
     /**

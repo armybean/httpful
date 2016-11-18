@@ -20,8 +20,10 @@ class Request {
     const SERIALIZE_PAYLOAD_NEVER  = 0;
     const SERIALIZE_PAYLOAD_ALWAYS = 1;
     const SERIALIZE_PAYLOAD_SMART  = 2;
+    const MAX_REDIRECTS_DEFAULT    = 25;
 
-    const MAX_REDIRECTS_DEFAULT = 25;
+    // Template Request object
+    private static $_template;
 
     public $uri,
         $method = Http::GET,
@@ -44,24 +46,23 @@ class Request {
         $max_redirects = self::MAX_REDIRECTS_DEFAULT,
         $payload_serializers = [];
 
+    // Curl Handle
+    public $_ch,
+        $_debug;
+
     // Options
     // private $_options = array(
     //     'serialize_payload_method' => self::SERIALIZE_PAYLOAD_SMART
     //     'auto_parse' => true
     // );
+    
+    private $timeout,
+        $client_cert,
+        $client_key,
+        $client_passphrase,
+        $client_encoding;
 
-    // Curl Handle
-    public $_ch,
-        $_debug;
 
-    // Template Request object
-    private static $_template;
-
-    private $timeout;
-    private $client_cert;
-    private $client_key;
-    private $client_passphrase;
-    private $client_encoding;
 
     /**
      * We made the constructor private to force the factory style. This was done to keep the syntax cleaner and better
@@ -81,8 +82,6 @@ class Request {
             $this->$attr = $value;
         }
     }
-
-    // Defaults Management
 
     /**
      * Let's you configure default settings for this class from a template Request object. Simply construct a Request
@@ -106,6 +105,40 @@ class Request {
     }
 
     /**
+     * This is the default template to use if no template has been provided. The template tells the class which default
+     * values to use. While there is a slight overhead for object creation once per execution (not once per Request
+     * instantiation), it promotes readability and flexibility within the class.
+     */
+    private static function _initializeDefaults()
+    {
+        // This is the only place you will see this constructor syntax. It is only done here to prevent infinite
+        // recusion. Do not use this syntax elsewhere. It goes against the whole readability and transparency idea.
+        self::$_template = new Request(['method' => Http::GET]);
+
+        // This is more like it...
+        self::$_template->withoutStrictSSL();
+    }
+
+    public function withoutStrictSSL()
+    {
+        return $this->strictSSL(false);
+    }
+
+    /**
+     * Do we strictly enforce SSL verification?
+     *
+     * @param bool $strict
+     *
+     * @return Request
+     */
+    public function strictSSL($strict)
+    {
+        $this->strict_ssl = $strict;
+
+        return $this;
+    }
+
+    /**
      * Get default for a value based on the template object
      *
      * @param string|null $attr Name of attribute (e.g. mime, headers) if null just return the whole template object;
@@ -117,84 +150,17 @@ class Request {
         return isset($attr) ? self::$_template->$attr : self::$_template;
     }
 
-    // Accessors
-
     /**
-     * @return bool does the request have a timeout?
-     */
-    public function hasTimeout()
-    {
-        return isset($this->timeout);
-    }
-
-    /**
-     * @return bool has the internal curl request been initialized?
-     */
-    public function hasBeenInitialized()
-    {
-        return isset($this->_ch);
-    }
-
-    /**
-     * @return bool Is this request setup for basic auth?
-     */
-    public function hasBasicAuth()
-    {
-        return isset($this->password) && isset($this->username);
-    }
-
-    /**
-     * @return bool Is this request setup for digest auth?
-     */
-    public function hasDigestAuth()
-    {
-        return isset($this->password) && isset($this->username) && $this->additional_curl_opts[CURLOPT_HTTPAUTH] == CURLAUTH_DIGEST;
-    }
-
-    /**
-     * Specify a HTTP timeout
+     * Like Request:::get, except that it sends off the request as well returning a response
      *
-     * @param float|int $timeout seconds to timeout the HTTP call
+     * @param string $uri  optional uri to use
+     * @param string $mime expected
      *
-     * @return Request
+     * @return Response
      */
-    public function timeout($timeout)
+    public static function getQuick($uri, $mime = null)
     {
-        $this->timeout = $timeout;
-
-        return $this;
-    }
-
-    // alias timeout
-    public function timeoutIn($seconds)
-    {
-        return $this->timeout($seconds);
-    }
-
-    /**
-     * If the response is a 301 or 302 redirect, automatically
-     * send off another request to that location
-     *
-     * @param bool|int $follow follow or not to follow or maximal number of redirects
-     *
-     * @return Request
-     */
-    public function followRedirects($follow = true)
-    {
-        $this->max_redirects = $follow === true ? self::MAX_REDIRECTS_DEFAULT : max(0, $follow);
-        $this->follow_redirects = (bool) $follow;
-
-        return $this;
-    }
-
-    /**
-     * @see Request::followRedirects()
-     *
-     * @return Request
-     */
-    public function doNotFollowRedirects()
-    {
-        return $this->followRedirects(false);
+        return self::get($uri, $mime)->send();
     }
 
     /**
@@ -219,740 +185,14 @@ class Request {
         return $response;
     }
 
-    public function sendIt()
-    {
-        return $this->send();
-    }
-
-    // Setters
+    // alias timeout
 
     /**
-     * @param string $uri
-     *
-     * @return Request
+     * @return bool has the internal curl request been initialized?
      */
-    public function uri($uri)
+    public function hasBeenInitialized()
     {
-        $this->uri = $uri;
-
-        return $this;
-    }
-
-    /**
-     * User Basic Auth. Only use when over SSL/TSL/HTTPS.
-     *
-     * @param string $username
-     * @param string $password
-     *
-     * @return Request
-     */
-    public function basicAuth($username, $password)
-    {
-        $this->username = $username;
-        $this->password = $password;
-
-        return $this;
-    }
-
-    // @alias of basicAuth
-    public function authenticateWith($username, $password)
-    {
-        return $this->basicAuth($username, $password);
-    }
-
-    // @alias of basicAuth
-    public function authenticateWithBasic($username, $password)
-    {
-        return $this->basicAuth($username, $password);
-    }
-
-    // @alias of ntlmAuth
-    public function authenticateWithNTLM($username, $password)
-    {
-        return $this->ntlmAuth($username, $password);
-    }
-
-    public function ntlmAuth($username, $password)
-    {
-        $this->addOnCurlOption(CURLOPT_HTTPAUTH, CURLAUTH_NTLM);
-
-        return $this->basicAuth($username, $password);
-    }
-
-    /**
-     * User Digest Auth.
-     *
-     * @param string $username
-     * @param string $password
-     *
-     * @return Request
-     */
-    public function digestAuth($username, $password)
-    {
-        $this->addOnCurlOption(CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
-
-        return $this->basicAuth($username, $password);
-    }
-
-    // @alias of digestAuth
-    public function authenticateWithDigest($username, $password)
-    {
-        return $this->digestAuth($username, $password);
-    }
-
-    /**
-     * @return bool is this request setup for client side cert?
-     */
-    public function hasClientSideCert()
-    {
-        return isset($this->client_cert) && isset($this->client_key);
-    }
-
-    /**
-     * Use Client Side Cert Authentication
-     *
-     * @param string $key        file path to client key
-     * @param string $cert       file path to client cert
-     * @param string $passphrase for client key
-     * @param string $encoding   default PEM
-     *
-     * @return Request
-     */
-    public function clientSideCert($cert, $key, $passphrase = null, $encoding = 'PEM')
-    {
-        $this->client_cert = $cert;
-        $this->client_key = $key;
-        $this->client_passphrase = $passphrase;
-        $this->client_encoding = $encoding;
-
-        return $this;
-    }
-
-    // @alias of basicAuth
-    public function authenticateWithCert($cert, $key, $passphrase = null, $encoding = 'PEM')
-    {
-        return $this->clientSideCert($cert, $key, $passphrase, $encoding);
-    }
-
-    /**
-     * Set the body of the request
-     *
-     * @param mixed  $payload
-     * @param string $mimeType currently, sets the sends AND expects mime type although this behavior may change in the
-     *                         next minor release (as it is a potential breaking change).
-     *
-     * @return Request
-     */
-    public function body($payload, $mimeType = null)
-    {
-        $this->mime($mimeType);
-        $this->payload = $payload;
-
-        // Iserntentially don't call _serializePayload yet. Wait until we actually send off the request to convert
-        // payload to string. At that time, the `serialized_payload` is set accordingly.
-
-        return $this;
-    }
-
-    /**
-     * Helper function to set the Content type and Expected as same in one swoop
-     *
-     * @param string $mime mime type to use for content type and expected return type
-     *
-     * @return Request
-     */
-    public function mime($mime)
-    {
-        if (empty($mime))
-        {
-            return $this;
-        }
-        $this->content_type = $this->expected_type = Mime::getFullMime($mime);
-        if ($this->isUpload())
-        {
-            $this->neverSerializePayload();
-        }
-
-        return $this;
-    }
-
-    // @alias of mime
-    public function sendsAndExpectsType($mime)
-    {
-        return $this->mime($mime);
-    }
-
-    // @alias of mime
-    public function sendsAndExpects($mime)
-    {
-        return $this->mime($mime);
-    }
-
-    /**
-     * Set the method. Shouldn't be called often as the preferred syntax for instantiation is the method specific
-     * factory methods.
-     *
-     * @param string $method
-     *
-     * @return Request
-     */
-    public function method($method)
-    {
-        if (empty($method))
-        {
-            return $this;
-        }
-        $this->method = $method;
-
-        return $this;
-    }
-
-    /**
-     * @param string $mime
-     *
-     * @return Request
-     */
-    public function expects($mime)
-    {
-        if (empty($mime))
-        {
-            return $this;
-        }
-        $this->expected_type = Mime::getFullMime($mime);
-
-        return $this;
-    }
-
-    // @alias of expects
-    public function expectsType($mime)
-    {
-        return $this->expects($mime);
-    }
-
-    public function attach($files)
-    {
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        foreach ($files as $key => $file)
-        {
-            $mimeType = finfo_file($finfo, $file);
-            if (function_exists('curl_file_create'))
-            {
-                $this->payload[$key] = curl_file_create($file, $mimeType);
-            }
-            else
-            {
-                $this->payload[$key] = '@' . $file;
-                if ($mimeType)
-                {
-                    $this->payload[$key] .= ';type=' . $mimeType;
-                }
-            }
-        }
-        $this->sendsType(Mime::UPLOAD);
-
-        return $this;
-    }
-
-    /**
-     * @param string $mime
-     *
-     * @return Request
-     */
-    public function contentType($mime)
-    {
-        if (empty($mime))
-        {
-            return $this;
-        }
-        $this->content_type = Mime::getFullMime($mime);
-        if ($this->isUpload())
-        {
-            $this->neverSerializePayload();
-        }
-
-        return $this;
-    }
-
-    // @alias of contentType
-    public function sends($mime)
-    {
-        return $this->contentType($mime);
-    }
-
-    // @alias of contentType
-    public function sendsType($mime)
-    {
-        return $this->contentType($mime);
-    }
-
-    /**
-     * Do we strictly enforce SSL verification?
-     *
-     * @param bool $strict
-     *
-     * @return Request
-     */
-    public function strictSSL($strict)
-    {
-        $this->strict_ssl = $strict;
-
-        return $this;
-    }
-
-    public function withoutStrictSSL()
-    {
-        return $this->strictSSL(false);
-    }
-
-    public function withStrictSSL()
-    {
-        return $this->strictSSL(true);
-    }
-
-    /**
-     * Use proxy configuration
-     *
-     * @param string $proxy_host    Hostname or address of the proxy
-     * @param int    $proxy_port    Port of the proxy. Default 80
-     * @param string $auth_type     Authentication type or null. Accepted values are CURLAUTH_BASIC, CURLAUTH_NTLM.
-     *                              Default null, no authentication
-     * @param string $auth_username Authentication username. Default null
-     * @param string $auth_password Authentication password. Default null
-     * @param int    $proxy_type    Type of proxy, default HTTP
-     *
-     * @return \Armybean\Httpful\Request
-     */
-    public function useProxy(
-        $proxy_host,
-        $proxy_port = 80,
-        $auth_type = null,
-        $auth_username = null,
-        $auth_password = null,
-        $proxy_type = Proxy::HTTP
-    ) {
-        $this->addOnCurlOption(CURLOPT_PROXY, "{$proxy_host}:{$proxy_port}");
-        $this->addOnCurlOption(CURLOPT_PROXYTYPE, $proxy_type);
-        if (in_array($auth_type, [CURLAUTH_BASIC, CURLAUTH_NTLM]))
-        {
-            $this->addOnCurlOption(CURLOPT_PROXYAUTH, $auth_type)
-                ->addOnCurlOption(CURLOPT_PROXYUSERPWD, "{$auth_username}:{$auth_password}");
-        }
-
-        return $this;
-    }
-
-    /**
-     * Shortcut for useProxy to configure SOCKS 4 proxy
-     *
-     * @see Request::useProxy
-     *
-     * @param string      $proxy_host
-     * @param int         $proxy_port
-     * @param null|string $auth_type
-     * @param null|string $auth_username
-     * @param null|string $auth_password
-     *
-     * @return \Armybean\Httpful\Request
-     */
-    public function useSocks4Proxy(
-        $proxy_host,
-        $proxy_port = 80,
-        $auth_type = null,
-        $auth_username = null,
-        $auth_password = null
-    ) {
-        return $this->useProxy($proxy_host, $proxy_port, $auth_type, $auth_username, $auth_password, Proxy::SOCKS4);
-    }
-
-    /**
-     * Shortcut for useProxy to configure SOCKS 5 proxy
-     *
-     * @see Request::useProxy
-     *
-     * @param string      $proxy_host
-     * @param int         $proxy_port
-     * @param null|string $auth_type
-     * @param null|string $auth_username
-     * @param null|string $auth_password
-     *
-     * @return \Armybean\Httpful\Request
-     */
-    public function useSocks5Proxy(
-        $proxy_host,
-        $proxy_port = 80,
-        $auth_type = null,
-        $auth_username = null,
-        $auth_password = null
-    ) {
-        return $this->useProxy($proxy_host, $proxy_port, $auth_type, $auth_username, $auth_password, Proxy::SOCKS5);
-    }
-
-    /**
-     * @return bool is this request setup for using proxy?
-     */
-    public function hasProxy()
-    {
-        return isset($this->additional_curl_opts[CURLOPT_PROXY]) && is_string($this->additional_curl_opts[CURLOPT_PROXY]);
-    }
-
-    /**
-     * Determine how/if we use the built in serialization by setting the serialize_payload_method
-     * The default (SERIALIZE_PAYLOAD_SMART) is...
-     *  - if payload is not a scalar (object/array) use the appropriate serialize method according to the Content-Type
-     *    of this request.
-     *  - if the payload IS a scalar (int, float, string, bool) than just return it as is.
-     * When this option is set SERIALIZE_PAYLOAD_ALWAYS, it will always use the appropriate serialize option regardless
-     * of whether payload is scalar or not When this option is set SERIALIZE_PAYLOAD_NEVER, it will never use any of
-     * the serialization methods. Really the only use for this is if you want the serialize methods to handle strings
-     * or not (e.g. Blah is not valid JSON, but "Blah" is). Forcing the serialization helps prevent that kind of error
-     * from happening.
-     *
-     * @param int $mode
-     *
-     * @return Request
-     */
-    public function serializePayload($mode)
-    {
-        $this->serialize_payload_method = $mode;
-
-        return $this;
-    }
-
-    /**
-     * @see Request::serializePayload()
-     *
-     * @return Request
-     */
-    public function neverSerializePayload()
-    {
-        return $this->serializePayload(self::SERIALIZE_PAYLOAD_NEVER);
-    }
-
-    /**
-     * This method is the default behavior
-     *
-     * @see Request::serializePayload()
-     *
-     * @return Request
-     */
-    public function smartSerializePayload()
-    {
-        return $this->serializePayload(self::SERIALIZE_PAYLOAD_SMART);
-    }
-
-    /**
-     * @see Request::serializePayload()
-     *
-     * @return Request
-     */
-    public function alwaysSerializePayload()
-    {
-        return $this->serializePayload(self::SERIALIZE_PAYLOAD_ALWAYS);
-    }
-
-    /**
-     * Add an additional header to the request
-     * Can also use the cleaner syntax of $Request->withMyHeaderName($my_value);
-     *
-     * @see Request::__call()
-     *
-     * @param string $header_name
-     * @param string $value
-     *
-     * @return Request
-     */
-    public function addHeader($header_name, $value)
-    {
-        $this->headers[$header_name] = $value;
-
-        return $this;
-    }
-
-    /**
-     * Add group of headers all at once. Note: This is here just as a convenience in very specific cases. The preferred
-     * "readable" way would be to leverage the support for custom header methods.
-     *
-     * @param array $headers
-     *
-     * @return Request
-     */
-    public function addHeaders(array $headers)
-    {
-        foreach ($headers as $header => $value)
-        {
-            $this->addHeader($header, $value);
-        }
-
-        return $this;
-    }
-
-    /**
-     * @param bool $auto_parse perform automatic "smart" parsing based on Content-Type or "expectedType"
-     *                         If not auto parsing, Response->body returns the body as a string.
-     *
-     * @return Request
-     */
-    public function autoParse($auto_parse = true)
-    {
-        $this->auto_parse = $auto_parse;
-
-        return $this;
-    }
-
-    /**
-     * @see Request::autoParse()
-     *
-     * @return Request
-     */
-    public function withoutAutoParsing()
-    {
-        return $this->autoParse(false);
-    }
-
-    /**
-     * @see Request::autoParse()
-     *
-     * @return Request
-     */
-    public function withAutoParsing()
-    {
-        return $this->autoParse(true);
-    }
-
-    /**
-     * Use a custom function to parse the response.
-     *
-     * @param \Closure $callback Takes the raw body of the http response and returns a mixed
-     *
-     * @return Request
-     */
-    public function parseWith(\Closure $callback)
-    {
-        $this->parse_callback = $callback;
-
-        return $this;
-    }
-
-    /**
-     * @see Request::parseResponsesWith()
-     *
-     * @param \Closure $callback
-     *
-     * @return Request
-     */
-    public function parseResponsesWith(\Closure $callback)
-    {
-        return $this->parseWith($callback);
-    }
-
-    /**
-     * Callback called to handle HTTP errors. When nothing is set, defaults to logging via `error_log`
-     *
-     * @param \Closure $callback (string $error)
-     *
-     * @return Request
-     */
-    public function whenError(\Closure $callback)
-    {
-        $this->error_callback = $callback;
-
-        return $this;
-    }
-
-    /**
-     * Callback invoked after payload has been serialized but before the request has been built.
-     *
-     * @param \Closure $callback (Request $request)
-     *
-     * @return Request
-     */
-    public function beforeSend(\Closure $callback)
-    {
-        $this->send_callback = $callback;
-
-        return $this;
-    }
-
-    /**
-     * Register a callback that will be used to serialize the payload for a particular mime type. When using "*" for
-     * the mime type, it will use that parser for all responses regardless of the mime type. If a custom '*' and
-     * 'application/json' exist, the custom 'application/json' would take precedence over the '*' callback.
-     *
-     * @param string   $mime     mime type we're registering
-     * @param \Closure $callback takes one argument, $payload, which is the payload that we'll be
-     *
-     * @return Request
-     */
-    public function registerPayloadSerializer($mime, \Closure $callback)
-    {
-        $this->payload_serializers[Mime::getFullMime($mime)] = $callback;
-
-        return $this;
-    }
-
-    /**
-     * @see Request::registerPayloadSerializer()
-     *
-     * @param \Closure $callback
-     *
-     * @return Request
-     */
-    public function serializePayloadWith(\Closure $callback)
-    {
-        return $this->registerPayloadSerializer('*', $callback);
-    }
-
-    /**
-     * Magic method allows for neatly setting other headers in a similar syntax as the other setters. This method
-     * also allows for the sends* syntax.
-     *
-     * @param string $method "missing" method name called the method name called should be the name of the header
-     *                       that you are trying to set in camel case without dashes e.g. to set a header for
-     *                       Content-Type you would use contentType() or more commonly to add a custom header like
-     *                       X-My-Header, you would use xMyHeader(). To promote readability, you can optionally prefix
-     *                       these methods with "with" (e.g. withXMyHeader("blah") instead of xMyHeader("blah")).
-     * @param array  $args   in this case, there should only ever be 1 argument provided and that argument should be a
-     *                       string value of the header we're setting
-     *
-     * @return \Armybean\Httpful\Request
-     * @throws \Exception
-     */
-    public function __call($method, $args)
-    {
-        // This method supports the sends* methods like sendsJSON, sendsForm
-        if (substr($method, 0, 5) === 'sends')
-        {
-            $mime = strtolower(substr($method, 5));
-            if (Mime::supportsMimeType($mime))
-            {
-                $this->sends(Mime::getFullMime($mime));
-
-                return $this;
-            }
-            else
-            {
-                throw new \Exception("Unsupported Content-Type $mime");
-            }
-        }
-
-        if (substr($method, 0, 7) === 'expects')
-        {
-            $mime = strtolower(substr($method, 7));
-            if (Mime::supportsMimeType($mime))
-            {
-                $this->expects(Mime::getFullMime($mime));
-
-                return $this;
-            }
-            else
-            {
-                throw new \Exception("Unsupported Content-Type $mime");
-            }
-        }
-
-        // This method also adds the custom header support as described in the method comments
-        if (count($args) === 0)
-        {
-            return;
-        }
-
-        // Strip the sugar. If it leads with "with", strip. This is okay because: No defined HTTP headers begin with
-        // with, and if you are defining a custom header, the standard is to prefix it with an "X-", so that should take
-        // care of any collisions.
-        if (substr($method, 0, 4) === 'with')
-        {
-            $method = substr($method, 4);
-        }
-
-        // Precede upper case letters with dashes, uppercase the first letter of method
-        $header = ucwords(implode('-',
-            preg_split('/([A-Z][^A-Z]*)/', $method, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY)));
-        $this->addHeader($header, $args[0]);
-
-        return $this;
-    }
-
-    // Internal Functions
-
-    /**
-     * This is the default template to use if no template has been provided. The template tells the class which default
-     * values to use. While there is a slight overhead for object creation once per execution (not once per Request
-     * instantiation), it promotes readability and flexibility within the class.
-     */
-    private static function _initializeDefaults()
-    {
-        // This is the only place you will see this constructor syntax. It is only done here to prevent infinite
-        // recusion. Do not use this syntax elsewhere. It goes against the whole readability and transparency idea.
-        self::$_template = new Request(['method' => Http::GET]);
-
-        // This is more like it...
-        self::$_template->withoutStrictSSL();
-    }
-
-    /**
-     * Set the defaults on a newly instantiated object
-     * Doesn't copy variables prefixed with _
-     *
-     * @return Request
-     */
-    private function _setDefaults()
-    {
-        if ( ! isset(self::$_template))
-        {
-            self::_initializeDefaults();
-        }
-        foreach (self::$_template as $k => $v)
-        {
-            if ($k[0] != '_')
-            {
-                $this->$k = $v;
-            }
-        }
-
-        return $this;
-    }
-
-    private function _error($error)
-    {
-        // TODO add in support for various Loggers that follow
-        // PSR 3 https://github.com/php-fig/fig-standards/blob/master/accepted/PSR-3-logger-interface.md
-        if (isset($this->error_callback))
-        {
-            $this->error_callback->__invoke($error);
-        }
-        else
-        {
-            error_log($error);
-        }
-    }
-
-    /**
-     * Factory style constructor works nicer for chaining. This should also really only be used internally. The
-     * Request::get, Request::post syntax is preferred as it is more readable.
-     *
-     * @param string $method Http Method
-     * @param string $mime   Mime Type to Use
-     *
-     * @return Request
-     */
-    public static function init($method = null, $mime = null)
-    {
-        // Setup our handlers, can call it here as it's idempotent
-        Bootstrap::init();
-
-        // Setup the default template if need be
-        if ( ! isset(self::$_template))
-        {
-            self::_initializeDefaults();
-        }
-
-        $request = new Request();
-
-        return $request
-            ->_setDefaults()
-            ->method($method)
-            ->sendsType($mime)
-            ->expectsType($mime);
+        return isset($this->_ch);
     }
 
     /**
@@ -1120,6 +360,81 @@ class Request {
     }
 
     /**
+     * Turn payload from structured data into a string based on the current Mime type. This uses the auto_serialize
+     * option to determine it's course of action. See serialize method for more. Renamed from _detectPayload to
+     * _serializePayload as of 2012-02-15.
+     *
+     * Added in support for custom payload serializers. The serialize_payload_method stuff still holds true though.
+     *
+     * @see Request::registerPayloadSerializer()
+     *
+     * @param mixed $payload
+     *
+     * @return string
+     */
+    private function _serializePayload($payload)
+    {
+        if (empty($payload) || $this->serialize_payload_method === self::SERIALIZE_PAYLOAD_NEVER)
+        {
+            return $payload;
+        }
+
+        // When we are in "smart" mode, don't serialize strings/scalars, assume they are already serialized
+        if ($this->serialize_payload_method === self::SERIALIZE_PAYLOAD_SMART && is_scalar($payload))
+        {
+            return $payload;
+        }
+
+        // Use a custom serializer if one is registered for this mime type
+        if (isset($this->payload_serializers['*']) || isset($this->payload_serializers[$this->content_type]))
+        {
+            $key = isset($this->payload_serializers[$this->content_type]) ? $this->content_type : '*';
+
+            return call_user_func($this->payload_serializers[$key], $payload);
+        }
+
+        return Httpful::get($this->content_type)->serialize($payload);
+    }
+
+    /**
+     * @return bool Is this request setup for basic auth?
+     */
+    public function hasBasicAuth()
+    {
+        return isset($this->password) && isset($this->username);
+    }
+
+    /**
+     * @return bool is this request setup for client side cert?
+     */
+    public function hasClientSideCert()
+    {
+        return isset($this->client_cert) && isset($this->client_key);
+    }
+
+    // Setters
+
+    /**
+     * @return bool does the request have a timeout?
+     */
+    public function hasTimeout()
+    {
+        return isset($this->timeout);
+    }
+
+    // @alias of basicAuth
+
+    /**
+     * @return bool
+     */
+    public function isUpload()
+    {
+        return Mime::UPLOAD == $this->content_type;
+    }
+
+    // @alias of basicAuth
+
+    /**
      * @param string $str payload
      *
      * @return int length of payload in bytes
@@ -1134,13 +449,7 @@ class Request {
         return strlen($str);
     }
 
-    /**
-     * @return bool
-     */
-    public function isUpload()
-    {
-        return Mime::UPLOAD == $this->content_type;
-    }
+    // @alias of ntlmAuth
 
     /**
      * @return string
@@ -1228,6 +537,422 @@ class Request {
         return new Response($body, $headers, $this, $info);
     }
 
+    private function _error($error)
+    {
+        // TODO add in support for various Loggers that follow
+        // PSR 3 https://github.com/php-fig/fig-standards/blob/master/accepted/PSR-3-logger-interface.md
+        if (isset($this->error_callback))
+        {
+            $this->error_callback->__invoke($error);
+        }
+        else
+        {
+            error_log($error);
+        }
+    }
+
+    // @alias of digestAuth
+
+    /**
+     * @return bool is this request setup for using proxy?
+     */
+    public function hasProxy()
+    {
+        return isset($this->additional_curl_opts[CURLOPT_PROXY]) && is_string($this->additional_curl_opts[CURLOPT_PROXY]);
+    }
+
+    /**
+     * HTTP Method Get
+     *
+     * @param string $uri  optional uri to use
+     * @param string $mime expected
+     *
+     * @return Request
+     */
+    public static function get($uri, $mime = null)
+    {
+        return self::init(Http::GET)->setUri($uri)->mime($mime);
+    }
+
+    /**
+     * Helper function to set the Content type and Expected as same in one swoop
+     *
+     * @param string $mime mime type to use for content type and expected return type
+     *
+     * @return Request
+     */
+    public function mime($mime)
+    {
+        if (empty($mime))
+        {
+            return $this;
+        }
+        $this->content_type = $this->expected_type = Mime::getFullMime($mime);
+        if ($this->isUpload())
+        {
+            $this->neverSerializePayload();
+        }
+
+        return $this;
+    }
+
+    // @alias of basicAuth
+
+    /**
+     * @see Request::serializePayload()
+     *
+     * @return Request
+     */
+    public function neverSerializePayload()
+    {
+        return $this->serializePayload(self::SERIALIZE_PAYLOAD_NEVER);
+    }
+
+    /**
+     * Determine how/if we use the built in serialization by setting the serialize_payload_method
+     * The default (SERIALIZE_PAYLOAD_SMART) is...
+     *  - if payload is not a scalar (object/array) use the appropriate serialize method according to the Content-Type
+     *    of this request.
+     *  - if the payload IS a scalar (int, float, string, bool) than just return it as is.
+     * When this option is set SERIALIZE_PAYLOAD_ALWAYS, it will always use the appropriate serialize option regardless
+     * of whether payload is scalar or not When this option is set SERIALIZE_PAYLOAD_NEVER, it will never use any of
+     * the serialization methods. Really the only use for this is if you want the serialize methods to handle strings
+     * or not (e.g. Blah is not valid JSON, but "Blah" is). Forcing the serialization helps prevent that kind of error
+     * from happening.
+     *
+     * @param int $mode
+     *
+     * @return Request
+     */
+    public function serializePayload($mode)
+    {
+        $this->serialize_payload_method = $mode;
+
+        return $this;
+    }
+
+    /**
+     * Factory style constructor works nicer for chaining. This should also really only be used internally. The
+     * Request::get, Request::post syntax is preferred as it is more readable.
+     *
+     * @param string $method Http Method
+     * @param string $mime   Mime Type to Use
+     *
+     * @return Request
+     */
+    public static function init($method = null, $mime = null)
+    {
+        // Setup our handlers, can call it here as it's idempotent
+        Bootstrap::init();
+
+        // Setup the default template if need be
+        if ( ! isset(self::$_template))
+        {
+            self::_initializeDefaults();
+        }
+
+        $request = new Request();
+
+        return $request
+            ->_setDefaults()
+            ->method($method)
+            ->sendsType($mime)
+            ->expectsType($mime);
+    }
+
+    // @alias of mime
+
+    public function expectsType($mime)
+    {
+        return $this->expects($mime);
+    }
+
+    // @alias of mime
+
+    /**
+     * @param string $mime
+     *
+     * @return Request
+     */
+    public function expects($mime)
+    {
+        if (empty($mime))
+        {
+            return $this;
+        }
+        $this->expected_type = Mime::getFullMime($mime);
+
+        return $this;
+    }
+
+    public function sendsType($mime)
+    {
+        return $this->contentType($mime);
+    }
+
+    /**
+     * @param string $mime
+     *
+     * @return Request
+     */
+    public function contentType($mime)
+    {
+        if (empty($mime))
+        {
+            return $this;
+        }
+        $this->content_type = Mime::getFullMime($mime);
+        if ($this->isUpload())
+        {
+            $this->neverSerializePayload();
+        }
+
+        return $this;
+    }
+
+    // @alias of expects
+
+    /**
+     * Set the method. Shouldn't be called often as the preferred syntax for instantiation is the method specific
+     * factory methods.
+     *
+     * @param string $method
+     *
+     * @return Request
+     */
+    public function method($method)
+    {
+        if (empty($method))
+        {
+            return $this;
+        }
+        $this->method = $method;
+
+        return $this;
+    }
+
+    /**
+     * Set the defaults on a newly instantiated object
+     * Doesn't copy variables prefixed with _
+     *
+     * @return Request
+     */
+    private function _setDefaults()
+    {
+        if ( ! isset(self::$_template))
+        {
+            self::_initializeDefaults();
+        }
+        foreach (self::$_template as $k => $v)
+        {
+            if ($k[0] != '_')
+            {
+                $this->$k = $v;
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * HTTP Method Post
+     *
+     * @param string $uri     optional uri to use
+     * @param string $payload data to send in body of request
+     * @param string $mime    MIME to use for Content-Type
+     *
+     * @return Request
+     */
+    public static function post($uri, $payload = null, $mime = null)
+    {
+        return self::init(Http::POST)->setUri($uri)->body($payload, $mime);
+    }
+
+    // @alias of contentType
+
+    /**
+     * Set the body of the request
+     *
+     * @param mixed  $payload
+     * @param string $mimeType currently, sets the sends AND expects mime type although this behavior may change in the
+     *                         next minor release (as it is a potential breaking change).
+     *
+     * @return Request
+     */
+    public function body($payload, $mimeType = null)
+    {
+        $this->mime($mimeType);
+        $this->payload = $payload;
+
+        // Iserntentially don't call _serializePayload yet. Wait until we actually send off the request to convert
+        // payload to string. At that time, the `serialized_payload` is set accordingly.
+
+        return $this;
+    }
+
+    // @alias of contentType
+
+    /**
+     * HTTP Method Put
+     *
+     * @param string $uri     optional uri to use
+     * @param string $payload data to send in body of request
+     * @param string $mime    MIME to use for Content-Type
+     *
+     * @return Request
+     */
+    public static function put($uri, $payload = null, $mime = null)
+    {
+        return self::init(Http::PUT)->setUri($uri)->body($payload, $mime);
+    }
+
+    /**
+     * HTTP Method Patch
+     *
+     * @param string $uri     optional uri to use
+     * @param string $payload data to send in body of request
+     * @param string $mime    MIME to use for Content-Type
+     *
+     * @return Request
+     */
+    public static function patch($uri, $payload = null, $mime = null)
+    {
+        return self::init(Http::PATCH)->setUri($uri)->body($payload, $mime);
+    }
+
+    /**
+     * HTTP Method Delete
+     *
+     * @param string      $uri optional uri to use
+     * @param null|string $mime
+     *
+     * @return \Armybean\Httpful\Request
+     */
+    public static function delete($uri, $mime = null)
+    {
+        return self::init(Http::DELETE)->setUri($uri)->mime($mime);
+    }
+
+    /**
+     * HTTP Method Head
+     *
+     * @param string $uri optional uri to use
+     *
+     * @return Request
+     */
+    public static function head($uri)
+    {
+        return self::init(Http::HEAD)->setUri($uri);
+    }
+
+    /**
+     * HTTP Method Options
+     *
+     * @param string $uri optional uri to use
+     *
+     * @return Request
+     */
+    public static function options($uri)
+    {
+        return self::init(Http::OPTIONS)->setUri($uri);
+    }
+
+    /**
+     * @return bool Is this request setup for digest auth?
+     */
+    public function hasDigestAuth()
+    {
+        return isset($this->password) && isset($this->username) && $this->additional_curl_opts[CURLOPT_HTTPAUTH] == CURLAUTH_DIGEST;
+    }
+
+    public function timeoutIn($seconds)
+    {
+        return $this->timeout($seconds);
+    }
+
+    /**
+     * Specify a HTTP timeout
+     *
+     * @param float|int $timeout seconds to timeout the HTTP call
+     *
+     * @return Request
+     */
+    public function timeout($timeout)
+    {
+        $this->timeout = $timeout;
+
+        return $this;
+    }
+
+    /**
+     * @see Request::followRedirects()
+     *
+     * @return Request
+     */
+    public function doNotFollowRedirects()
+    {
+        return $this->followRedirects(false);
+    }
+
+    /**
+     * If the response is a 301 or 302 redirect, automatically
+     * send off another request to that location
+     *
+     * @param bool|int $follow follow or not to follow or maximal number of redirects
+     *
+     * @return Request
+     */
+    public function followRedirects($follow = true)
+    {
+        $this->max_redirects = $follow === true ? self::MAX_REDIRECTS_DEFAULT : max(0, $follow);
+        $this->follow_redirects = (bool) $follow;
+
+        return $this;
+    }
+
+    public function sendIt()
+    {
+        return $this->send();
+    }
+
+    public function authenticateWith($username, $password)
+    {
+        return $this->basicAuth($username, $password);
+    }
+
+    /**
+     * User Basic Auth. Only use when over SSL/TSL/HTTPS.
+     *
+     * @param string $username
+     * @param string $password
+     *
+     * @return Request
+     */
+    public function basicAuth($username, $password)
+    {
+        $this->username = $username;
+        $this->password = $password;
+
+        return $this;
+    }
+
+    public function authenticateWithBasic($username, $password)
+    {
+        return $this->basicAuth($username, $password);
+    }
+
+    public function authenticateWithNTLM($username, $password)
+    {
+        return $this->ntlmAuth($username, $password);
+    }
+
+    public function ntlmAuth($username, $password)
+    {
+        $this->addOnCurlOption(CURLOPT_HTTPAUTH, CURLAUTH_NTLM);
+
+        return $this->basicAuth($username, $password);
+    }
+
     /**
      * Semi-reluctantly added this as a way to add in curl opts that are not otherwise accessible from the rest of
      * the API.
@@ -1244,144 +969,436 @@ class Request {
         return $this;
     }
 
+    public function authenticateWithDigest($username, $password)
+    {
+        return $this->digestAuth($username, $password);
+    }
+
     /**
-     * Turn payload from structured data into a string based on the current Mime type. This uses the auto_serialize
-     * option to determine it's course of action. See serialize method for more. Renamed from _detectPayload to
-     * _serializePayload as of 2012-02-15.
+     * User Digest Auth.
      *
-     * Added in support for custom payload serializers. The serialize_payload_method stuff still holds true though.
+     * @param string $username
+     * @param string $password
      *
+     * @return Request
+     */
+    public function digestAuth($username, $password)
+    {
+        $this->addOnCurlOption(CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
+
+        return $this->basicAuth($username, $password);
+    }
+
+    public function authenticateWithCert($cert, $key, $passphrase = null, $encoding = 'PEM')
+    {
+        return $this->clientSideCert($cert, $key, $passphrase, $encoding);
+    }
+
+    /**
+     * Use Client Side Cert Authentication
+     *
+     * @param string $key        file path to client key
+     * @param string $cert       file path to client cert
+     * @param string $passphrase for client key
+     * @param string $encoding   default PEM
+     *
+     * @return Request
+     */
+    public function clientSideCert($cert, $key, $passphrase = null, $encoding = 'PEM')
+    {
+        $this->client_cert = $cert;
+        $this->client_key = $key;
+        $this->client_passphrase = $passphrase;
+        $this->client_encoding = $encoding;
+
+        return $this;
+    }
+
+    public function sendsAndExpectsType($mime)
+    {
+        return $this->mime($mime);
+    }
+
+    public function sendsAndExpects($mime)
+    {
+        return $this->mime($mime);
+    }
+
+    public function attach($files)
+    {
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        foreach ($files as $key => $file)
+        {
+            $mimeType = finfo_file($finfo, $file);
+            if (function_exists('curl_file_create'))
+            {
+                $this->payload[$key] = curl_file_create($file, $mimeType);
+            }
+            else
+            {
+                $this->payload[$key] = '@' . $file;
+                if ($mimeType)
+                {
+                    $this->payload[$key] .= ';type=' . $mimeType;
+                }
+            }
+        }
+        $this->sendsType(Mime::UPLOAD);
+
+        return $this;
+    }
+
+    // Internal Functions
+
+    public function withStrictSSL()
+    {
+        return $this->strictSSL(true);
+    }
+
+    /**
+     * Shortcut for useProxy to configure SOCKS 4 proxy
+     *
+     * @see Request::useProxy
+     *
+     * @param string      $proxy_host
+     * @param int         $proxy_port
+     * @param null|string $auth_type
+     * @param null|string $auth_username
+     * @param null|string $auth_password
+     *
+     * @return \Armybean\Httpful\Request
+     */
+    public function useSocks4Proxy(
+        $proxy_host,
+        $proxy_port = 80,
+        $auth_type = null,
+        $auth_username = null,
+        $auth_password = null
+    ) {
+        return $this->useProxy($proxy_host, $proxy_port, $auth_type, $auth_username, $auth_password, Proxy::SOCKS4);
+    }
+
+    /**
+     * Use proxy configuration
+     *
+     * @param string $proxy_host    Hostname or address of the proxy
+     * @param int    $proxy_port    Port of the proxy. Default 80
+     * @param string $auth_type     Authentication type or null. Accepted values are CURLAUTH_BASIC, CURLAUTH_NTLM.
+     *                              Default null, no authentication
+     * @param string $auth_username Authentication username. Default null
+     * @param string $auth_password Authentication password. Default null
+     * @param int    $proxy_type    Type of proxy, default HTTP
+     *
+     * @return \Armybean\Httpful\Request
+     */
+    public function useProxy(
+        $proxy_host,
+        $proxy_port = 80,
+        $auth_type = null,
+        $auth_username = null,
+        $auth_password = null,
+        $proxy_type = Proxy::HTTP
+    ) {
+        $this->addOnCurlOption(CURLOPT_PROXY, "{$proxy_host}:{$proxy_port}");
+        $this->addOnCurlOption(CURLOPT_PROXYTYPE, $proxy_type);
+        if (in_array($auth_type, [CURLAUTH_BASIC, CURLAUTH_NTLM]))
+        {
+            $this->addOnCurlOption(CURLOPT_PROXYAUTH, $auth_type)
+                ->addOnCurlOption(CURLOPT_PROXYUSERPWD, "{$auth_username}:{$auth_password}");
+        }
+
+        return $this;
+    }
+
+    /**
+     * Shortcut for useProxy to configure SOCKS 5 proxy
+     *
+     * @see Request::useProxy
+     *
+     * @param string      $proxy_host
+     * @param int         $proxy_port
+     * @param null|string $auth_type
+     * @param null|string $auth_username
+     * @param null|string $auth_password
+     *
+     * @return \Armybean\Httpful\Request
+     */
+    public function useSocks5Proxy(
+        $proxy_host,
+        $proxy_port = 80,
+        $auth_type = null,
+        $auth_username = null,
+        $auth_password = null
+    ) {
+        return $this->useProxy($proxy_host, $proxy_port, $auth_type, $auth_username, $auth_password, Proxy::SOCKS5);
+    }
+
+    /**
+     * This method is the default behavior
+     *
+     * @see Request::serializePayload()
+     *
+     * @return Request
+     */
+    public function smartSerializePayload()
+    {
+        return $this->serializePayload(self::SERIALIZE_PAYLOAD_SMART);
+    }
+
+    /**
+     * @see Request::serializePayload()
+     *
+     * @return Request
+     */
+    public function alwaysSerializePayload()
+    {
+        return $this->serializePayload(self::SERIALIZE_PAYLOAD_ALWAYS);
+    }
+
+    /**
+     * Add group of headers all at once. Note: This is here just as a convenience in very specific cases. The preferred
+     * "readable" way would be to leverage the support for custom header methods.
+     *
+     * @param array $headers
+     *
+     * @return Request
+     */
+    public function addHeaders(array $headers)
+    {
+        foreach ($headers as $header => $value)
+        {
+            $this->addHeader($header, $value);
+        }
+
+        return $this;
+    }
+
+    /**
+     * Add an additional header to the request
+     * Can also use the cleaner syntax of $Request->withMyHeaderName($my_value);
+     *
+     * @see Request::__call()
+     *
+     * @param string $header_name
+     * @param string $value
+     *
+     * @return Request
+     */
+    public function addHeader($header_name, $value)
+    {
+        $this->headers[$header_name] = $value;
+
+        return $this;
+    }
+
+    /**
+     * @see Request::autoParse()
+     *
+     * @return Request
+     */
+    public function withoutAutoParsing()
+    {
+        return $this->autoParse(false);
+    }
+
+    /**
+     * @param bool $auto_parse perform automatic "smart" parsing based on Content-Type or "expectedType"
+     *                         If not auto parsing, Response->body returns the body as a string.
+     *
+     * @return Request
+     */
+    public function autoParse($auto_parse = true)
+    {
+        $this->auto_parse = $auto_parse;
+
+        return $this;
+    }
+
+    /**
+     * @see Request::autoParse()
+     *
+     * @return Request
+     */
+    public function withAutoParsing()
+    {
+        return $this->autoParse(true);
+    }
+
+    /**
+     * @see Request::parseResponsesWith()
+     *
+     * @param \Closure $callback
+     *
+     * @return Request
+     */
+    public function parseResponsesWith(\Closure $callback)
+    {
+        return $this->parseWith($callback);
+    }
+
+    /**
+     * Use a custom function to parse the response.
+     *
+     * @param \Closure $callback Takes the raw body of the http response and returns a mixed
+     *
+     * @return Request
+     */
+    public function parseWith(\Closure $callback)
+    {
+        $this->parse_callback = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Callback called to handle HTTP errors. When nothing is set, defaults to logging via `error_log`
+     *
+     * @param \Closure $callback (string $error)
+     *
+     * @return Request
+     */
+    public function whenError(\Closure $callback)
+    {
+        $this->error_callback = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Callback invoked after payload has been serialized but before the request has been built.
+     *
+     * @param \Closure $callback (Request $request)
+     *
+     * @return Request
+     */
+    public function beforeSend(\Closure $callback)
+    {
+        $this->send_callback = $callback;
+
+        return $this;
+    }
+
+    /**
      * @see Request::registerPayloadSerializer()
      *
-     * @param mixed $payload
+     * @param \Closure $callback
      *
-     * @return string
+     * @return Request
      */
-    private function _serializePayload($payload)
+    public function serializePayloadWith(\Closure $callback)
     {
-        if (empty($payload) || $this->serialize_payload_method === self::SERIALIZE_PAYLOAD_NEVER)
+        return $this->registerPayloadSerializer('*', $callback);
+    }
+
+    /**
+     * Register a callback that will be used to serialize the payload for a particular mime type. When using "*" for
+     * the mime type, it will use that parser for all responses regardless of the mime type. If a custom '*' and
+     * 'application/json' exist, the custom 'application/json' would take precedence over the '*' callback.
+     *
+     * @param string   $mime     mime type we're registering
+     * @param \Closure $callback takes one argument, $payload, which is the payload that we'll be
+     *
+     * @return Request
+     */
+    public function registerPayloadSerializer($mime, \Closure $callback)
+    {
+        $this->payload_serializers[Mime::getFullMime($mime)] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Magic method allows for neatly setting other headers in a similar syntax as the other setters. This method
+     * also allows for the sends* syntax.
+     *
+     * @param string $method "missing" method name called the method name called should be the name of the header
+     *                       that you are trying to set in camel case without dashes e.g. to set a header for
+     *                       Content-Type you would use contentType() or more commonly to add a custom header like
+     *                       X-My-Header, you would use xMyHeader(). To promote readability, you can optionally prefix
+     *                       these methods with "with" (e.g. withXMyHeader("blah") instead of xMyHeader("blah")).
+     * @param array  $args   in this case, there should only ever be 1 argument provided and that argument should be a
+     *                       string value of the header we're setting
+     *
+     * @return \Armybean\Httpful\Request
+     * @throws \Exception
+     */
+    public function __call($method, $args)
+    {
+        // This method supports the sends* methods like sendsJSON, sendsForm
+        if (substr($method, 0, 5) === 'sends')
         {
-            return $payload;
+            $mime = strtolower(substr($method, 5));
+            if (Mime::supportsMimeType($mime))
+            {
+                $this->sends(Mime::getFullMime($mime));
+
+                return $this;
+            }
+            else
+            {
+                throw new \Exception("Unsupported Content-Type $mime");
+            }
         }
 
-        // When we are in "smart" mode, don't serialize strings/scalars, assume they are already serialized
-        if ($this->serialize_payload_method === self::SERIALIZE_PAYLOAD_SMART && is_scalar($payload))
+        if (substr($method, 0, 7) === 'expects')
         {
-            return $payload;
+            $mime = strtolower(substr($method, 7));
+            if (Mime::supportsMimeType($mime))
+            {
+                $this->expects(Mime::getFullMime($mime));
+
+                return $this;
+            }
+            else
+            {
+                throw new \Exception("Unsupported Content-Type $mime");
+            }
         }
 
-        // Use a custom serializer if one is registered for this mime type
-        if (isset($this->payload_serializers['*']) || isset($this->payload_serializers[$this->content_type]))
+        // This method also adds the custom header support as described in the method comments
+        if (count($args) === 0)
         {
-            $key = isset($this->payload_serializers[$this->content_type]) ? $this->content_type : '*';
-
-            return call_user_func($this->payload_serializers[$key], $payload);
+            return;
         }
 
-        return Httpful::get($this->content_type)->serialize($payload);
+        // Strip the sugar. If it leads with "with", strip. This is okay because: No defined HTTP headers begin with
+        // with, and if you are defining a custom header, the standard is to prefix it with an "X-", so that should take
+        // care of any collisions.
+        if (substr($method, 0, 4) === 'with')
+        {
+            $method = substr($method, 4);
+        }
+
+        // Precede upper case letters with dashes, uppercase the first letter of method
+        $header = ucwords(implode('-',
+            preg_split('/([A-Z][^A-Z]*)/', $method, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY)));
+        $this->addHeader($header, $args[0]);
+
+        return $this;
+    }
+
+    public function sends($mime)
+    {
+        return $this->contentType($mime);
     }
 
     /**
-     * HTTP Method Get
-     *
-     * @param string $uri  optional uri to use
-     * @param string $mime expected
-     *
-     * @return Request
+     * @return mixed
      */
-    public static function get($uri, $mime = null)
+    public function getUri()
     {
-        return self::init(Http::GET)->uri($uri)->mime($mime);
+        return $this->uri;
     }
 
     /**
-     * Like Request:::get, except that it sends off the request as well returning a response
+     * @param mixed $uri
      *
-     * @param string $uri  optional uri to use
-     * @param string $mime expected
-     *
-     * @return Response
+     * @return $this
      */
-    public static function getQuick($uri, $mime = null)
+    public function setUri($uri)
     {
-        return self::get($uri, $mime)->send();
-    }
+        $this->uri = $uri;
 
-    /**
-     * HTTP Method Post
-     *
-     * @param string $uri     optional uri to use
-     * @param string $payload data to send in body of request
-     * @param string $mime    MIME to use for Content-Type
-     *
-     * @return Request
-     */
-    public static function post($uri, $payload = null, $mime = null)
-    {
-        return self::init(Http::POST)->uri($uri)->body($payload, $mime);
-    }
-
-    /**
-     * HTTP Method Put
-     *
-     * @param string $uri     optional uri to use
-     * @param string $payload data to send in body of request
-     * @param string $mime    MIME to use for Content-Type
-     *
-     * @return Request
-     */
-    public static function put($uri, $payload = null, $mime = null)
-    {
-        return self::init(Http::PUT)->uri($uri)->body($payload, $mime);
-    }
-
-    /**
-     * HTTP Method Patch
-     *
-     * @param string $uri     optional uri to use
-     * @param string $payload data to send in body of request
-     * @param string $mime    MIME to use for Content-Type
-     *
-     * @return Request
-     */
-    public static function patch($uri, $payload = null, $mime = null)
-    {
-        return self::init(Http::PATCH)->uri($uri)->body($payload, $mime);
-    }
-
-    /**
-     * HTTP Method Delete
-     *
-     * @param string $uri optional uri to use
-     *
-     * @return Request
-     */
-    public static function delete($uri, $mime = null)
-    {
-        return self::init(Http::DELETE)->uri($uri)->mime($mime);
-    }
-
-    /**
-     * HTTP Method Head
-     *
-     * @param string $uri optional uri to use
-     *
-     * @return Request
-     */
-    public static function head($uri)
-    {
-        return self::init(Http::HEAD)->uri($uri);
-    }
-
-    /**
-     * HTTP Method Options
-     *
-     * @param string $uri optional uri to use
-     *
-     * @return Request
-     */
-    public static function options($uri)
-    {
-        return self::init(Http::OPTIONS)->uri($uri);
+        return $this;
     }
 }

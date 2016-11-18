@@ -67,45 +67,6 @@ class XmlHandler extends MimeHandlerAdapter {
     }
 
     /**
-     * @param mixed $payload
-     *
-     * @return string
-     * @author Ted Zellers
-     */
-    public function serialize_clean($payload)
-    {
-        $xml = new \XMLWriter;
-        $xml->openMemory();
-        $xml->startDocument('1.0', 'ISO-8859-1');
-        $this->serialize_node($xml, $payload);
-
-        return $xml->outputMemory(true);
-    }
-
-    /**
-     * @param \XMLWriter $xmlw
-     * @param mixed      $node to serialize
-     *
-     * @author Ted Zellers
-     */
-    public function serialize_node(&$xmlw, $node)
-    {
-        if ( ! is_array($node))
-        {
-            $xmlw->text($node);
-        }
-        else
-        {
-            foreach ($node as $k => $v)
-            {
-                $xmlw->startElement($k);
-                $this->serialize_node($xmlw, $v);
-                $xmlw->endElement();
-            }
-        }
-    }
-
-    /**
      * @author Zack Douglas <zack@zackerydouglas.info>
      *
      * @param      $value
@@ -171,6 +132,31 @@ class XmlHandler extends MimeHandlerAdapter {
      *
      * @return array
      */
+    private function _future_serializeObjectAsXml($value, &$parent, &$dom)
+    {
+        $refl = new \ReflectionObject($value);
+        foreach ($refl->getProperties() as $pr)
+        {
+            if ( ! $pr->isPrivate())
+            {
+                $el = $dom->createElement($pr->getName());
+                $parent->appendChild($el);
+                $this->_future_serializeAsXml($pr->getValue($value), $el, $dom);
+            }
+        }
+
+        return [$parent, $dom];
+    }
+
+    /**
+     * @author Zack Douglas <zack@zackerydouglas.info>
+     *
+     * @param              $value
+     * @param \DOMElement  $parent
+     * @param \DOMDocument $dom
+     *
+     * @return array
+     */
     private function _future_serializeArrayAsXml($value, &$parent, &$dom)
     {
         foreach ($value as $k => &$v)
@@ -189,27 +175,41 @@ class XmlHandler extends MimeHandlerAdapter {
     }
 
     /**
-     * @author Zack Douglas <zack@zackerydouglas.info>
+     * @param mixed $payload
      *
-     * @param              $value
-     * @param \DOMElement  $parent
-     * @param \DOMDocument $dom
-     *
-     * @return array
+     * @return string
+     * @author Ted Zellers
      */
-    private function _future_serializeObjectAsXml($value, &$parent, &$dom)
+    public function serialize_clean($payload)
     {
-        $refl = new \ReflectionObject($value);
-        foreach ($refl->getProperties() as $pr)
+        $xml = new \XMLWriter;
+        $xml->openMemory();
+        $xml->startDocument('1.0', 'ISO-8859-1');
+        $this->serialize_node($xml, $payload);
+
+        return $xml->outputMemory(true);
+    }
+
+    /**
+     * @param \XMLWriter $xmlw
+     * @param mixed      $node to serialize
+     *
+     * @author Ted Zellers
+     */
+    public function serialize_node(&$xmlw, $node)
+    {
+        if ( ! is_array($node))
         {
-            if ( ! $pr->isPrivate())
+            $xmlw->text($node);
+        }
+        else
+        {
+            foreach ($node as $k => $v)
             {
-                $el = $dom->createElement($pr->getName());
-                $parent->appendChild($el);
-                $this->_future_serializeAsXml($pr->getValue($value), $el, $dom);
+                $xmlw->startElement($k);
+                $this->serialize_node($xmlw, $v);
+                $xmlw->endElement();
             }
         }
-
-        return [$parent, $dom];
     }
 }

@@ -45,81 +45,6 @@ class Response {
         $this->body = $this->_parse($body);
     }
 
-    /**
-     * Status Code Definitions
-     *
-     * Informational 1xx
-     * Successful    2xx
-     * Redirection   3xx
-     * Client Error  4xx
-     * Server Error  5xx
-     *
-     * http://pretty-rfc.herokuapp.com/RFC2616#status.codes
-     *
-     * @return bool Did we receive a 4xx or 5xx?
-     */
-    public function hasErrors()
-    {
-        return $this->code >= 400;
-    }
-
-    /**
-     * @return bool
-     */
-    public function hasBody()
-    {
-        return ! empty($this->body);
-    }
-
-    /**
-     * Parse the response into a clean data structure (most often an associative array) based on the expected Mime type.
-     *
-     * @param string Http response body
-     *
-     * @return array|string|object the response parse accordingly
-     */
-    public function _parse($body)
-    {
-        // If the user decided to forgo the automatic smart parsing, short circuit.
-        if ( ! $this->request->auto_parse)
-        {
-            return $body;
-        }
-
-        // If provided, use custom parsing callback
-        if (isset($this->request->parse_callback))
-        {
-            return call_user_func($this->request->parse_callback, $body);
-        }
-
-        // Decide how to parse the body of the response in the following order
-        //  1. If provided, use the mime type specifically set as part of the `Request`
-        //  2. If a MimeHandler is registered for the content type, use it
-        //  3. If provided, use the "parent type" of the mime type from the response
-        //  4. Default to the content-type provided in the response
-        $parse_with = $this->request->expected_type;
-        if (empty($this->request->expected_type))
-        {
-            $parse_with = Httpful::hasParserRegistered($this->content_type)
-                ? $this->content_type
-                : $this->parent_type;
-        }
-
-        return Httpful::get($parse_with)->parse($body);
-    }
-
-    /**
-     * Parse text headers from response into array of key value pairs
-     *
-     * @param string $headers raw headers
-     *
-     * @return array parse headers
-     */
-    public function _parseHeaders($headers)
-    {
-        return Response\Headers::fromString($headers)->toArray();
-    }
-
     public function _parseCode($headers)
     {
         $end = strpos($headers, "\r\n");
@@ -175,6 +100,81 @@ class Response {
             list($vendor, $this->parent_type) = explode('+', $this->content_type, 2);
             $this->parent_type = Mime::getFullMime($this->parent_type);
         }
+    }
+
+    /**
+     * Parse the response into a clean data structure (most often an associative array) based on the expected Mime type.
+     *
+     * @param string Http response body
+     *
+     * @return array|string|object the response parse accordingly
+     */
+    public function _parse($body)
+    {
+        // If the user decided to forgo the automatic smart parsing, short circuit.
+        if ( ! $this->request->auto_parse)
+        {
+            return $body;
+        }
+
+        // If provided, use custom parsing callback
+        if (isset($this->request->parse_callback))
+        {
+            return call_user_func($this->request->parse_callback, $body);
+        }
+
+        // Decide how to parse the body of the response in the following order
+        //  1. If provided, use the mime type specifically set as part of the `Request`
+        //  2. If a MimeHandler is registered for the content type, use it
+        //  3. If provided, use the "parent type" of the mime type from the response
+        //  4. Default to the content-type provided in the response
+        $parse_with = $this->request->expected_type;
+        if (empty($this->request->expected_type))
+        {
+            $parse_with = Httpful::hasParserRegistered($this->content_type)
+                ? $this->content_type
+                : $this->parent_type;
+        }
+
+        return Httpful::get($parse_with)->parse($body);
+    }
+
+    /**
+     * Status Code Definitions
+     *
+     * Informational 1xx
+     * Successful    2xx
+     * Redirection   3xx
+     * Client Error  4xx
+     * Server Error  5xx
+     *
+     * http://pretty-rfc.herokuapp.com/RFC2616#status.codes
+     *
+     * @return bool Did we receive a 4xx or 5xx?
+     */
+    public function hasErrors()
+    {
+        return $this->code >= 400;
+    }
+
+    /**
+     * @return bool
+     */
+    public function hasBody()
+    {
+        return ! empty($this->body);
+    }
+
+    /**
+     * Parse text headers from response into array of key value pairs
+     *
+     * @param string $headers raw headers
+     *
+     * @return array parse headers
+     */
+    public function _parseHeaders($headers)
+    {
+        return Response\Headers::fromString($headers)->toArray();
     }
 
     /**
