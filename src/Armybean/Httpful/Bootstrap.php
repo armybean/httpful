@@ -1,18 +1,21 @@
 <?php
 
-namespace Httpful;
+namespace Armybean\Httpful;
+
+use Armybean\Httpful\Handlers\CsvHandler;
+use Armybean\Httpful\Handlers\FormHandler;
+use Armybean\Httpful\Handlers\JsonHandler;
+use Armybean\Httpful\Handlers\XmlHandler;
 
 /**
- * Bootstrap class that facilitates autoloading.  A naive
- * PSR-0 autoloader.
+ * Bootstrap class that facilitates autoloading. A naive PSR-0 autoloader.
  *
  * @author Nate Good <me@nategood.com>
  */
-class Bootstrap
-{
+class Bootstrap {
 
     const DIR_GLUE = DIRECTORY_SEPARATOR;
-    const NS_GLUE = '\\';
+    const NS_GLUE  = '\\';
 
     public static $registered = false;
 
@@ -21,7 +24,7 @@ class Bootstrap
      */
     public static function init()
     {
-        spl_autoload_register(array('\Httpful\Bootstrap', 'autoload'));
+        spl_autoload_register(['\Armybean\Httpful\Bootstrap', 'autoload']);
         self::registerHandlers();
     }
 
@@ -40,7 +43,7 @@ class Bootstrap
      */
     public static function pharInit()
     {
-        spl_autoload_register(array('\Httpful\Bootstrap', 'pharAutoload'));
+        spl_autoload_register(['\Armybean\Httpful\Bootstrap', 'pharAutoload']);
         self::registerHandlers();
     }
 
@@ -60,35 +63,41 @@ class Bootstrap
      */
     private static function _autoload($base, $classname)
     {
-        $parts      = explode(self::NS_GLUE, $classname);
-        $path       = $base . self::DIR_GLUE . implode(self::DIR_GLUE, $parts) . '.php';
+        $parts = explode(self::NS_GLUE, $classname);
+        $path = $base . self::DIR_GLUE . implode(self::DIR_GLUE, $parts) . '.php';
 
-        if (file_exists($path)) {
+        if (file_exists($path))
+        {
             require_once($path);
         }
     }
+
     /**
      * Register default mime handlers.  Is idempotent.
      */
     public static function registerHandlers()
     {
-        if (self::$registered === true) {
+        if (self::$registered === true)
+        {
             return;
         }
 
         // @todo check a conf file to load from that instead of
         // hardcoding into the library?
-        $handlers = array(
-            \Httpful\Mime::JSON => new \Httpful\Handlers\JsonHandler(),
-            \Httpful\Mime::XML  => new \Httpful\Handlers\XmlHandler(),
-            \Httpful\Mime::FORM => new \Httpful\Handlers\FormHandler(),
-            \Httpful\Mime::CSV  => new \Httpful\Handlers\CsvHandler(),
-        );
+        $handlers = [
+            Mime::JSON => new JsonHandler(),
+            Mime::XML  => new XmlHandler(),
+            Mime::FORM => new FormHandler(),
+            Mime::CSV  => new CsvHandler(),
+        ];
 
-        foreach ($handlers as $mime => $handler) {
+        foreach ($handlers as $mime => $handler)
+        {
             // Don't overwrite if the handler has already been registered
             if (Httpful::hasParserRegistered($mime))
+            {
                 continue;
+            }
             Httpful::register($mime, $handler);
         }
 

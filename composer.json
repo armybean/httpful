@@ -1,7 +1,7 @@
 {
-    "name": "nategood/httpful",
-    "description": "A Readable, Chainable, REST friendly, PHP HTTP Client",
-    "homepage": "http://github.com/nategood/httpful",
+    "name": "armybean/httpful",
+    "description": "A Readable, Chainable, REST friendly, PHP HTTP Client; Forked from Nate Good",
+    "homepage": "http://github.com/armybean/httpful",
     "license": "MIT",
     "keywords": ["http", "curl", "rest", "restful", "api", "requests"],
     "version": "0.2.20",
@@ -10,6 +10,10 @@
             "name": "Nate Good",
             "email": "me@nategood.com",
             "homepage": "http://nategood.com"
+        },
+        {
+            "name": "Daniel Franke",
+            "email": "info@df-web.net"
         }
     ],
     "require": {
@@ -18,7 +22,7 @@
     },
     "autoload": {
         "psr-0": {
-            "Httpful": "src/"
+            "Armybean\\Httpful": "src/"
         }
     },
     "require-dev": {
